@@ -12,7 +12,16 @@
   },
   "augmentations": {
     "wave": [],
-    "spectrogram": []
+    "spectrogram": [
+      {
+        "type": "TimeMasking",
+        "args": {"time_mask_param": 16, "p": 0.1}
+      },
+      {
+        "type": "FrequencyMasking",
+        "args": {"freq_mask_param": 16}
+      }
+    ]
   },
   "arch": {
     "type": "DeepSpeechModel",
@@ -31,22 +40,6 @@
           "type": "LibrispeechDataset",
           "args": {
             "part": "train-clean-100",
-            "max_audio_length": 20.0,
-            "max_text_length": 200
-          }
-        },
-        {
-          "type": "LibrispeechDataset",
-          "args": {
-            "part": "train-clean-360",
-            "max_audio_length": 20.0,
-            "max_text_length": 200
-          }
-        },
-        {
-          "type": "LibrispeechDataset",
-          "args": {
-            "part": "train-other-500",
             "max_audio_length": 20.0,
             "max_text_length": 200
           }
