@@ -24,7 +24,7 @@ class DeepSpeechModel(BaseModel):
         )
 
         rnn_input_size = 32 * (n_feats // 4)
-        self.rnn_block = nn.GRU(rnn_input_size, hidden_size=rnn_hidden, num_layers=3,
+        self.rnn_block = nn.GRU(rnn_input_size, hidden_size=rnn_hidden, num_layers=7,
                                 batch_first=True, bidirectional=True)
 
         if seq_batch_norm:
@@ -37,25 +37,25 @@ class DeepSpeechModel(BaseModel):
         )
 
     def forward(self, spectrogram, **batch):
-        # print("1 shape", spectrogram.shape)
         x = spectrogram[:, None, :, :]
         # x (batch_size, n_channels, feature_length, max_time)
-        # print("2 shape", x.shape)
+
         x = self.conv_block(x)
-        # print("3 shape", x.shape)
         x = x.reshape(x.shape[0], x.shape[1] * x.shape[2], x.shape[3])
         # x (batch_size, new_feature_length, max_time)
+
         x = x.transpose(1, 2)
         # x (batch_size, max_time, new_feature_length)
-        # print("4 shape", x.shape)
+
         x = self.rnn_block(x)[0]
         # x (batch_size, max_time, 2 * rnn_hidden)
+
         if self.seq_batch_norm is not None:
             a, b, c = x.shape[0], x.shape[1], x.shape[2]
             x = x.reshape((a * b, c))
             x = self.seq_batch_norm(x)
             x = x.reshape((a, b, c))
-        # print("5 shape", x.shape)
+
         x = self.fc(x)
         return {"logits": x}
 

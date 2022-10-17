@@ -42,7 +42,35 @@ class CTCCharTextEncoder(CharTextEncoder):
         assert len(probs.shape) == 2
         char_length, voc_size = probs.shape
         assert voc_size == len(self.ind2char)
+
+        hypos_dict = {('', self.EMPTY_TOK): 1.0}
+
+        for column_ind in range(char_length):
+            # extend
+            new_hypos_dict = {}
+
+            for (hypo_text, last_char), prob in hypos_dict.items():
+                for char_ind in range(voc_size):
+                    cur_char = self.ind2char[char_ind]
+                    new_last_char = cur_char
+                    if cur_char == last_char:
+                        new_hypo_text = hypo_text
+                    else:
+                        new_hypo_text = hypo_text
+                        if cur_char != self.EMPTY_TOK:
+                            new_hypo_text += cur_char
+
+                    # (new_hypo_text, new_last_char)
+                    new_prob = prob * probs[column_ind, char_ind]
+                    if (new_hypo_text, new_last_char) not in new_hypos_dict:
+                        new_hypos_dict[(new_hypo_text, new_last_char)] = 0.0
+                    new_hypos_dict[(new_hypo_text, new_last_char)] += new_prob
+
+            # cut
+            hypos_dict = dict(list(sorted(new_hypos_dict.items(), key=lambda x: x[1]))[-beam_size:])
+
         hypos: List[Hypothesis] = []
-        # TODO: your code here
-        raise NotImplementedError
+        for (hypo_text, last_char), prob in hypos_dict.items():
+            hypos.append(Hypothesis(text=hypo_text, prob=prob))
+
         return sorted(hypos, key=lambda x: x.prob, reverse=True)
