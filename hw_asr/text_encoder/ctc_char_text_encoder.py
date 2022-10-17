@@ -50,7 +50,7 @@ class CTCCharTextEncoder(CharTextEncoder):
             new_hypos_dict = {}
 
             for (hypo_text, last_char), prob in hypos_dict.items():
-                for char_ind in range(voc_size):
+                for char_ind in range(probs_length.item()):
                     cur_char = self.ind2char[char_ind]
                     new_last_char = cur_char
                     if cur_char == last_char:
