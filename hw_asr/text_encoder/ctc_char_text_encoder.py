@@ -45,12 +45,12 @@ class CTCCharTextEncoder(CharTextEncoder):
 
         hypos_dict = {('', self.EMPTY_TOK): 1.0}
 
-        for column_ind in range(char_length):
+        for column_ind in range(probs_length.item()):
             # extend
             new_hypos_dict = {}
 
             for (hypo_text, last_char), prob in hypos_dict.items():
-                for char_ind in range(probs_length.item()):
+                for char_ind in range(voc_size):
                     cur_char = self.ind2char[char_ind]
                     new_last_char = cur_char
                     if cur_char == last_char:
