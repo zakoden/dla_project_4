@@ -2,11 +2,15 @@
 
 ## Installation guide
 
-< Write your installation guide here >
+Код для установки, ссылки для скачивания весов лучшей модели, а также примеры запуска скриптов обучения, подсчёта метрик и тестирования можно найти в блокноте 
 
-```shell
-pip install -r ./requirements.txt
-```
+tl dr:
+1) git clone репозитория
+2) установка requirements.txt
+3) загрузка весов модели или обучение с нуля скриптом train.py
+4) подсчёт метрик скриптом calc_metrics.py
+5) скрипт test.py для получения файла с предсказаниями модели
+
 
 ## Recommended implementation order
 
