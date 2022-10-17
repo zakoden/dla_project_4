@@ -208,7 +208,8 @@ class Trainer(BaseTrainer):
             *args,
             **kwargs,
     ):
-        # TODO: implement logging of beam search results
+        # logging of beam search results is very slow and unnecessary during training
+        # it is implemented in calc_metrics.py
         if self.writer is None:
             return
         argmax_inds = log_probs.cpu().argmax(-1).numpy()
