@@ -1,7 +1,8 @@
-from hw_asr.model.baseline_model import BaselineModel
-from hw_asr.model.deepspeech_model import DeepSpeechModel
+from hw_asr.model.generator_hifi_model import Generator
+from hw_asr.model.discriminators_hifi_model import MSD, MPD
 
 __all__ = [
-    "BaselineModel",
-    "DeepSpeechModel"
+    "Generator",
+    "MSD",
+    "MPD"
 ]

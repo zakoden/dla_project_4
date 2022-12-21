@@ -11,10 +11,9 @@ from torchvision.transforms import ToTensor
 from tqdm import tqdm
 
 from hw_asr.base import BaseTrainer
-from hw_asr.base.base_text_encoder import BaseTextEncoder
 from hw_asr.logger.utils import plot_spectrogram_to_buf
-from hw_asr.metric.utils import calc_cer, calc_wer
 from hw_asr.utils import inf_loop, MetricTracker
+from hw_asr.mel_spectrogram import melspec_config, melspec_func
 
 
 class Trainer(BaseTrainer):
@@ -24,6 +23,9 @@ class Trainer(BaseTrainer):
 
     def __init__(
             self,
+            disc_model_lst,
+            disc_optimizer_lst,
+            disc_scheduler_lst,
             model,
             criterion,
             metrics,
@@ -31,14 +33,16 @@ class Trainer(BaseTrainer):
             config,
             device,
             dataloaders,
-            text_encoder,
             lr_scheduler=None,
             len_epoch=None,
             skip_oom=True,
     ):
         super().__init__(model, criterion, metrics, optimizer, config, device)
+        self.disc_model_lst = disc_model_lst
+        self.disc_optimizer_lst = disc_optimizer_lst
+        self.disc_scheduler_lst = disc_scheduler_lst
+
         self.skip_oom = skip_oom
-        self.text_encoder = text_encoder
         self.config = config
         self.train_dataloader = dataloaders["train"]
         if len_epoch is None:
@@ -64,7 +68,7 @@ class Trainer(BaseTrainer):
         """
         Move all necessary tensors to the HPU
         """
-        for tensor_for_gpu in ["spectrogram", "text_encoded"]:
+        for tensor_for_gpu in ["spectrogram", "audio"]:
             batch[tensor_for_gpu] = batch[tensor_for_gpu].to(device)
         return batch
 
@@ -82,6 +86,8 @@ class Trainer(BaseTrainer):
         :return: A log that contains average loss and metric in this epoch.
         """
         self.model.train()
+        for disc in self.disc_model_lst:
+            disc.train()
         self.train_metrics.reset()
         self.writer.add_scalar("epoch", epoch)
         for batch_idx, batch in enumerate(
@@ -114,9 +120,7 @@ class Trainer(BaseTrainer):
                 self.writer.add_scalar(
                     "learning rate", self.lr_scheduler.get_last_lr()[0]
                 )
-                self._log_predictions(**batch)
-                self._log_spectrogram(batch["spectrogram"])
-                self._log_scalars(self.train_metrics)
+                #self._log_spectrogram(batch["spectrogram"])
                 # we don't want to reset train metrics at the start of every epoch
                 # because we are interested in recent train metrics
                 last_train_metrics = self.train_metrics.result()
@@ -125,68 +129,66 @@ class Trainer(BaseTrainer):
                 break
         log = last_train_metrics
 
-        for part, dataloader in self.evaluation_dataloaders.items():
-            val_log = self._evaluation_epoch(epoch, part, dataloader)
-            log.update(**{f"{part}_{name}": value for name, value in val_log.items()})
-
         return log
 
     def process_batch(self, batch, is_train: bool, metrics: MetricTracker):
         batch = self.move_batch_to_device(batch, self.device)
-        if is_train:
-            self.optimizer.zero_grad()
-        outputs = self.model(**batch)
-        if type(outputs) is dict:
-            batch.update(outputs)
-        else:
-            batch["logits"] = outputs
 
-        batch["log_probs"] = F.log_softmax(batch["logits"], dim=-1)
-        batch["log_probs_length"] = self.model.transform_input_lengths(
-            batch["spectrogram_length"]
-        )
-        batch["loss"] = self.criterion(**batch)
-        if is_train:
-            batch["loss"].backward()
-            self._clip_grad_norm()
-            self.optimizer.step()
-            if self.lr_scheduler is not None:
-                self.lr_scheduler.step()
+        batch["wave_pred"] = self.model(batch["spectrogram"])["wave_pred"]
+        batch["spectrogram_pred"] = melspec_func(batch["wave_pred"][:, 0, :])
 
-        metrics.update("loss", batch["loss"].item())
-        for met in self.metrics:
-            metrics.update(met.name, met(**batch))
+        for disc_opt in self.disc_optimizer_lst:
+            disc_opt.zero_grad()
+
+        disc_MPD = self.disc_model_lst[0]
+        disc_MSD = self.disc_model_lst[1]
+
+        # discriminator losses
+        logits_true, features_true = disc_MPD(batch["audio"])
+        logits_pred, features_pred = disc_MPD(batch["wave_pred"].detach())
+        MPD_loss = self.criterion.adv_discriminator_loss(logits_true, logits_pred)
+
+        logits_true, features_true = disc_MSD(batch["audio"])
+        logits_pred, features_pred = disc_MSD(batch["wave_pred"].detach())
+        MSD_loss = self.criterion.adv_discriminator_loss(logits_true, logits_pred)
+
+        disc_loss = MPD_loss + MSD_loss
+        disc_loss.backward()
+        for disc_opt in self.disc_optimizer_lst:
+            disc_opt.step()
+
+        # generator losses
+        self.optimizer.zero_grad()
+
+        mel_loss = 45.0 * F.l1_loss(batch["spectrogram_pred"], batch["spectrogram"])
+
+        # MPD part
+        logits_true, features_true = disc_MPD(batch["audio"])
+        logits_pred, features_pred = disc_MPD(batch["wave_pred"])
+        features_loss_MPD = 2.0 * self.criterion.features_loss(features_true, features_pred)
+        logits_loss_MPD = self.criterion.adv_generator_loss(logits_pred)
+
+        logits_true, features_true = disc_MSD(batch["audio"])
+        logits_pred, features_pred = disc_MSD(batch["wave_pred"])
+        features_loss_MSD = 2.0 * self.criterion.features_loss(features_true, features_pred)
+        logits_loss_MSD = self.criterion.adv_generator_loss(logits_pred)
+
+        generator_loss = mel_loss + features_loss_MPD + logits_loss_MPD + features_loss_MSD + logits_loss_MSD
+        generator_loss.backward()
+        self.optimizer.step()
+
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
+
+        if self.disc_scheduler_lst is not None:
+            for disc_scheduler in self.disc_scheduler_lst:
+                disc_scheduler.step()
+
+        self.writer.add_scalar("generator loss", generator_loss.item())
+        self.writer.add_scalar("discriminator loss", disc_loss.item())
+        self.writer.add_scalar("learning rate", self.lr_scheduler.get_last_lr())
+
         return batch
-
-    def _evaluation_epoch(self, epoch, part, dataloader):
-        """
-        Validate after training an epoch
-
-        :param epoch: Integer, current training epoch.
-        :return: A log that contains information about validation
-        """
-        self.model.eval()
-        self.evaluation_metrics.reset()
-        with torch.no_grad():
-            for batch_idx, batch in tqdm(
-                    enumerate(dataloader),
-                    desc=part,
-                    total=len(dataloader),
-            ):
-                batch = self.process_batch(
-                    batch,
-                    is_train=False,
-                    metrics=self.evaluation_metrics,
-                )
-            self.writer.set_step(epoch * self.len_epoch, part)
-            self._log_scalars(self.evaluation_metrics)
-            self._log_predictions(**batch)
-            self._log_spectrogram(batch["spectrogram"])
-
-        # add histogram of model parameters to the tensorboard
-        for name, p in self.model.named_parameters():
-            self.writer.add_histogram(name, p, bins="auto")
-        return self.evaluation_metrics.result()
 
     def _progress(self, batch_idx):
         base = "[{}/{} ({:.0f}%)]"
@@ -197,44 +199,6 @@ class Trainer(BaseTrainer):
             current = batch_idx
             total = self.len_epoch
         return base.format(current, total, 100.0 * current / total)
-
-    def _log_predictions(
-            self,
-            text,
-            log_probs,
-            log_probs_length,
-            audio_path,
-            examples_to_log=10,
-            *args,
-            **kwargs,
-    ):
-        # logging of beam search results is very slow and unnecessary during training
-        # it is implemented in calc_metrics.py
-        if self.writer is None:
-            return
-        argmax_inds = log_probs.cpu().argmax(-1).numpy()
-        argmax_inds = [
-            inds[: int(ind_len)]
-            for inds, ind_len in zip(argmax_inds, log_probs_length.numpy())
-        ]
-        argmax_texts_raw = [self.text_encoder.decode(inds) for inds in argmax_inds]
-        argmax_texts = [self.text_encoder.ctc_decode(inds) for inds in argmax_inds]
-        tuples = list(zip(argmax_texts, text, argmax_texts_raw, audio_path))
-        shuffle(tuples)
-        rows = {}
-        for pred, target, raw_pred, audio_path in tuples[:examples_to_log]:
-            target = BaseTextEncoder.normalize_text(target)
-            wer = calc_wer(target, pred) * 100
-            cer = calc_cer(target, pred) * 100
-
-            rows[Path(audio_path).name] = {
-                "target": target,
-                "raw prediction": raw_pred,
-                "predictions": pred,
-                "wer": wer,
-                "cer": cer,
-            }
-        self.writer.add_table("predictions", pd.DataFrame.from_dict(rows, orient="index"))
 
     def _log_spectrogram(self, spectrogram_batch):
         spectrogram = random.choice(spectrogram_batch.cpu())
@@ -255,8 +219,3 @@ class Trainer(BaseTrainer):
         )
         return total_norm.item()
 
-    def _log_scalars(self, metric_tracker: MetricTracker):
-        if self.writer is None:
-            return
-        for metric_name in metric_tracker.keys():
-            self.writer.add_scalar(f"{metric_name}", metric_tracker.avg(metric_name))

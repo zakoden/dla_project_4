@@ -6,7 +6,6 @@ import numpy as np
 import torch
 
 import hw_asr.loss as module_loss
-import hw_asr.metric as module_metric
 import hw_asr.model as module_arch
 from hw_asr.trainer import Trainer
 from hw_asr.utils import prepare_device
@@ -26,45 +25,59 @@ np.random.seed(SEED)
 def main(config):
     logger = config.get_logger("train")
 
-    # text_encoder
-    text_encoder = config.get_text_encoder()
-
     # setup data_loader instances
-    dataloaders = get_dataloaders(config, text_encoder)
+    dataloaders = get_dataloaders(config)
 
     # build model architecture, then print to console
-    model = config.init_obj(config["arch"], module_arch, n_class=len(text_encoder))
-    logger.info(model)
+    model_G = config.init_obj(config["arch_generator"], module_arch)
+    disc_MPD = config.init_obj(config["arch_MPD"], module_arch)
+    disc_MSD = config.init_obj(config["arch_MSD"], module_arch)
+
+    #logger.info(model_G)
+    #logger.info(disc_MSD)
+    #logger.info(disc_MPD)
+
 
     # prepare for (multi-device) GPU training
     device, device_ids = prepare_device(config["n_gpu"])
-    model = model.to(device)
+    model_G = model_G.to(device)
+    disc_MSD = disc_MSD.to(device)
+    disc_MPD = disc_MPD.to(device)
     if len(device_ids) > 1:
-        model = torch.nn.DataParallel(model, device_ids=device_ids)
+        model_G = torch.nn.DataParallel(model_G, device_ids=device_ids)
+        disc_MSD = torch.nn.DataParallel(disc_MSD, device_ids=device_ids)
+        disc_MPD = torch.nn.DataParallel(disc_MPD, device_ids=device_ids)
 
     # get function handles of loss and metrics
     loss_module = config.init_obj(config["loss"], module_loss).to(device)
     metrics = [
-        config.init_obj(metric_dict, module_metric, text_encoder=text_encoder)
-        for metric_dict in config["metrics"]
     ]
 
     # build optimizer, learning rate scheduler. delete every line containing lr_scheduler for
     # disabling scheduler
-    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = config.init_obj(config["optimizer"], torch.optim, trainable_params)
-    lr_scheduler = config.init_obj(config["lr_scheduler"], torch.optim.lr_scheduler, optimizer)
+    model_lst = [model_G, disc_MPD, disc_MSD]
+    optimizer_lst = []
+    lr_scheduler_lst = []
+
+    for model in model_lst:
+        trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+        optimizer = config.init_obj(config["optimizer"], torch.optim, trainable_params)
+        lr_scheduler = config.init_obj(config["lr_scheduler"], torch.optim.lr_scheduler, optimizer)
+        optimizer_lst.append(optimizer)
+        lr_scheduler_lst.append(lr_scheduler)
 
     trainer = Trainer(
-        model,
+        model_lst[1:],
+        optimizer_lst[1:],
+        lr_scheduler_lst[1:],
+        model_lst[0],
         loss_module,
         metrics,
-        optimizer,
-        text_encoder=text_encoder,
+        optimizer_lst[0],
         config=config,
         device=device,
         dataloaders=dataloaders,
-        lr_scheduler=lr_scheduler,
+        lr_scheduler=lr_scheduler_lst[0],
         len_epoch=config["trainer"].get("len_epoch", None)
     )
 
