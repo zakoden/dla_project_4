@@ -93,6 +93,12 @@ class Trainer(BaseTrainer):
                     batch,
                     is_train=True
                 )
+                if self.lr_scheduler is not None:
+                    self.lr_scheduler.step()
+
+                if self.disc_scheduler_lst is not None:
+                    for disc_scheduler in self.disc_scheduler_lst:
+                        disc_scheduler.step()
             except RuntimeError as e:
                 if "out of memory" in str(e) and self.skip_oom:
                     self.logger.warning("OOM on batch. Skipping batch.")
@@ -106,11 +112,6 @@ class Trainer(BaseTrainer):
 
             if batch_idx % self.log_step == 0:
                 self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
-                self.logger.debug(
-                    "Train Epoch: {} {} G Loss: {:.6f}".format(
-                        epoch, self._progress(batch_idx), batch["loss"].item()
-                    )
-                )
                 self.writer.add_scalar("learning rate", self.lr_scheduler.get_last_lr()[0])
                 self.writer.add_scalar("generator loss", batch["generator_loss"].item())
                 self.writer.add_scalar("discriminator loss", batch["discriminator_loss"].item())
@@ -118,6 +119,11 @@ class Trainer(BaseTrainer):
                 self.writer.add_scalar("mel loss", batch["mel_loss"].item())
 
             if batch_idx % (self.log_step * 50) == 0:
+                self.logger.debug(
+                    "Train Epoch: {} {} G Loss: {:.6f}".format(
+                        epoch, self._progress(batch_idx), batch["loss"].item()
+                    )
+                )
                 self._log_test_audio()
 
                 #self._log_spectrogram(batch["spectrogram"])
@@ -176,13 +182,6 @@ class Trainer(BaseTrainer):
         generator_loss.backward()
         self.optimizer.step()
 
-        if self.lr_scheduler is not None:
-            self.lr_scheduler.step()
-
-        if self.disc_scheduler_lst is not None:
-            for disc_scheduler in self.disc_scheduler_lst:
-                disc_scheduler.step()
-
         batch["generator_loss"] = generator_loss
         batch["discriminator_loss"] = disc_loss
         batch["features_loss"] = features_loss_MPD + features_loss_MSD
@@ -205,6 +204,8 @@ class Trainer(BaseTrainer):
         log_data = []
         column_names = ["audio_index", "step", "original_audio", "generated_audio"]
 
+        self.model.eval()
+
         for batch_idx, batch in enumerate(self.evaluation_dataloaders["val"]):
             batch["audio"] = batch["audio"][:, None, :]
             batch = self.move_batch_to_device(batch, self.device)
@@ -212,14 +213,16 @@ class Trainer(BaseTrainer):
             batch["wave_pred"] = self.model(batch["spectrogram"])["wave_pred"]
             #batch["spectrogram_pred"] = self.melspec_func_deviced(batch["wave_pred"][:, 0, :])
 
-            torchaudio.save("orig_audio.wav", batch["audio"][:, 0, :].cpu(), 16000)
-            torchaudio.save("pred_audio.wav", batch["wave_pred"][:, 0, :].cpu(), 16000)
+            torchaudio.save(str(batch_idx) + "_orig_audio.wav", batch["audio"][:, 0, :].cpu(), 16000)
+            torchaudio.save(str(batch_idx) + "_pred_audio.wav", batch["wave_pred"][:, 0, :].cpu(), 16000)
             log_data.append([
                 batch_idx,
                 self.writer.step,
-                self.writer.wandb.Audio("orig_audio.wav", 16000),
-                self.writer.wandb.Audio("pred_audio.wav", 16000),
+                self.writer.wandb.Audio(str(batch_idx) + "_orig_audio.wav", 16000),
+                self.writer.wandb.Audio(str(batch_idx) + "_pred_audio.wav", 16000),
             ])
+
+        self.model.train()
 
         table = self.writer.wandb.Table(data=log_data, columns=column_names)
         self.writer.wandb.log({"test_set": table}, step=self.writer.step)
