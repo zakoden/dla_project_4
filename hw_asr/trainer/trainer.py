@@ -93,12 +93,6 @@ class Trainer(BaseTrainer):
                     batch,
                     is_train=True
                 )
-                if self.lr_scheduler is not None:
-                    self.lr_scheduler.step()
-
-                if self.disc_scheduler_lst is not None:
-                    for disc_scheduler in self.disc_scheduler_lst:
-                        disc_scheduler.step()
             except RuntimeError as e:
                 if "out of memory" in str(e) and self.skip_oom:
                     self.logger.warning("OOM on batch. Skipping batch.")
@@ -132,6 +126,13 @@ class Trainer(BaseTrainer):
 
             if batch_idx >= self.len_epoch:
                 break
+
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
+
+        if self.disc_scheduler_lst is not None:
+            for disc_scheduler in self.disc_scheduler_lst:
+                disc_scheduler.step()
 
         return {}
 
