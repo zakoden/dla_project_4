@@ -1,0 +1,85 @@
+{
+  "name": "train_config_v1",
+  "n_gpu": 1,
+  "preprocessing": {
+    "sr": 16000
+  },
+  "arch_generator": {
+    "type": "Generator",
+    "args": {
+      "hidden_dim": 512
+    }
+  },
+  "arch_MSD": {
+    "type": "MSD",
+    "args": {
+    }
+  },
+  "arch_MPD": {
+    "type": "MPD",
+    "args": {
+    }
+  },
+  "data": {
+    "train": {
+      "batch_size": 16,
+      "num_workers": 0,
+      "datasets": [
+        {
+          "type": "LJspeechDataset",
+          "args": {
+            "part": "train",
+            "max_audio_length": 20.0,
+            "max_text_length": 200,
+            "limit": 15000
+          }
+        }
+      ]
+    },
+    "val": {
+      "batch_size": 1,
+      "num_workers": 0,
+      "datasets": [
+        {
+          "type": "TestAudioDataset",
+          "args": {
+            "max_audio_length": 20.0,
+            "max_text_length": 200,
+            "limit": 20,
+            "data_path_lst": ["./audio_1.wav", "./audio_2.wav", "./audio_3.wav"]
+          }
+        }
+      ]
+    }
+  },
+  "optimizer": {
+    "type": "AdamW",
+    "args": {
+      "lr": 2e-4,
+      "betas": [0.8, 0.99],
+      "weight_decay": 0.01
+    }
+  },
+  "loss": {
+    "type": "AllLoss",
+    "args": {}
+  },
+  "metrics": [
+  ],
+  "lr_scheduler": {
+    "type": "ExponentialLR",
+    "args": {
+      "gamma": 0.999
+    }
+  },
+  "trainer": {
+    "epochs": 100,
+    "save_dir": "saved/",
+    "save_period": 5,
+    "verbosity": 2,
+    "visualize": "wandb",
+    "wandb_project": "dla4_project",
+    "len_epoch": 819,
+    "grad_norm_clip": 10
+  }
+}

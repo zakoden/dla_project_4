@@ -5,6 +5,7 @@ from random import shuffle
 import PIL
 import pandas as pd
 import torch
+import torchaudio
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 from torchvision.transforms import ToTensor
@@ -115,6 +116,8 @@ class Trainer(BaseTrainer):
                 self.writer.add_scalar("discriminator loss", batch["discriminator_loss"].item())
                 self.writer.add_scalar("features loss", batch["features_loss"].item())
                 self.writer.add_scalar("mel loss", batch["mel_loss"].item())
+
+            if batch_idx % (self.log_step * 50) == 0:
                 self._log_test_audio()
 
                 #self._log_spectrogram(batch["spectrogram"])
@@ -200,7 +203,7 @@ class Trainer(BaseTrainer):
 
     def _log_test_audio(self):
         log_data = []
-        column_names = ["original_audio", "generated_audio"]
+        column_names = ["audio_index", "step", "original_audio", "generated_audio"]
 
         for batch_idx, batch in enumerate(self.evaluation_dataloaders["val"]):
             batch["audio"] = batch["audio"][:, None, :]
@@ -209,9 +212,13 @@ class Trainer(BaseTrainer):
             batch["wave_pred"] = self.model(batch["spectrogram"])["wave_pred"]
             #batch["spectrogram_pred"] = self.melspec_func_deviced(batch["wave_pred"][:, 0, :])
 
+            torchaudio.save("orig_audio.wav", batch["audio"][:, 0, :].cpu(), 16000)
+            torchaudio.save("pred_audio.wav", batch["wave_pred"][:, 0, :].cpu(), 16000)
             log_data.append([
-                self.writer.wandb.Audio(batch["audio"]),
-                self.writer.wandb.Audio(batch["wave_pred"][:, 0, :]),
+                batch_idx,
+                self.writer.step,
+                self.writer.wandb.Audio("orig_audio.wav", 16000),
+                self.writer.wandb.Audio("pred_audio.wav", 16000),
             ])
 
         table = self.writer.wandb.Table(data=log_data, columns=column_names)
