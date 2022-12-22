@@ -28,7 +28,6 @@ class Trainer(BaseTrainer):
             disc_scheduler_lst,
             model,
             criterion,
-            metrics,
             optimizer,
             config,
             device,
@@ -37,7 +36,7 @@ class Trainer(BaseTrainer):
             len_epoch=None,
             skip_oom=True,
     ):
-        super().__init__(model, criterion, metrics, optimizer, config, device)
+        super().__init__(model, criterion, optimizer, config, device)
         self.disc_model_lst = disc_model_lst
         self.disc_optimizer_lst = disc_optimizer_lst
         self.disc_scheduler_lst = disc_scheduler_lst
@@ -55,13 +54,6 @@ class Trainer(BaseTrainer):
         self.evaluation_dataloaders = {k: v for k, v in dataloaders.items() if k != "train"}
         self.lr_scheduler = lr_scheduler
         self.log_step = 50
-
-        self.train_metrics = MetricTracker(
-            "loss", "grad norm", *[m.name for m in self.metrics], writer=self.writer
-        )
-        self.evaluation_metrics = MetricTracker(
-            "loss", *[m.name for m in self.metrics], writer=self.writer
-        )
 
     @staticmethod
     def move_batch_to_device(batch, device: torch.device):
@@ -88,7 +80,7 @@ class Trainer(BaseTrainer):
         self.model.train()
         for disc in self.disc_model_lst:
             disc.train()
-        self.train_metrics.reset()
+
         self.writer.add_scalar("epoch", epoch)
         for batch_idx, batch in enumerate(
                 tqdm(self.train_dataloader, desc="train", total=self.len_epoch)
@@ -96,8 +88,7 @@ class Trainer(BaseTrainer):
             try:
                 batch = self.process_batch(
                     batch,
-                    is_train=True,
-                    metrics=self.train_metrics,
+                    is_train=True
                 )
             except RuntimeError as e:
                 if "out of memory" in str(e) and self.skip_oom:
@@ -109,31 +100,33 @@ class Trainer(BaseTrainer):
                     continue
                 else:
                     raise e
-            self.train_metrics.update("grad norm", self.get_grad_norm())
+
             if batch_idx % self.log_step == 0:
                 self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
                 self.logger.debug(
-                    "Train Epoch: {} {} Loss: {:.6f}".format(
+                    "Train Epoch: {} {} G Loss: {:.6f}".format(
                         epoch, self._progress(batch_idx), batch["loss"].item()
                     )
                 )
-                self.writer.add_scalar(
-                    "learning rate", self.lr_scheduler.get_last_lr()[0]
-                )
+                self.writer.add_scalar("learning rate", self.lr_scheduler.get_last_lr()[0])
+                self.writer.add_scalar("generator loss", batch["generator_loss"].item())
+                self.writer.add_scalar("discriminator loss", batch["discriminator_loss"].item())
+                self.writer.add_scalar("features loss", batch["features_loss"].item())
+                self.writer.add_scalar("mel loss", batch["mel_loss"].item())
+
                 #self._log_spectrogram(batch["spectrogram"])
                 # we don't want to reset train metrics at the start of every epoch
                 # because we are interested in recent train metrics
-                last_train_metrics = self.train_metrics.result()
-                self.train_metrics.reset()
+
             if batch_idx >= self.len_epoch:
                 break
-        log = last_train_metrics
 
-        return log
+        return {}
 
-    def process_batch(self, batch, is_train: bool, metrics: MetricTracker):
+    def process_batch(self, batch, is_train: bool):
         batch = self.move_batch_to_device(batch, self.device)
 
+        batch["audio"] = batch["audio"][:, None, :]
         batch["wave_pred"] = self.model(batch["spectrogram"])["wave_pred"]
         batch["spectrogram_pred"] = melspec_func(batch["wave_pred"][:, 0, :])
 
@@ -184,10 +177,12 @@ class Trainer(BaseTrainer):
             for disc_scheduler in self.disc_scheduler_lst:
                 disc_scheduler.step()
 
-        self.writer.add_scalar("generator loss", generator_loss.item())
-        self.writer.add_scalar("discriminator loss", disc_loss.item())
-        self.writer.add_scalar("learning rate", self.lr_scheduler.get_last_lr())
+        batch["generator_loss"] = generator_loss
+        batch["discriminator_loss"] = disc_loss
+        batch["features_loss"] = features_loss_MPD + features_loss_MSD
+        batch["mel_loss"] = mel_loss
 
+        batch["loss"] = generator_loss
         return batch
 
     def _progress(self, batch_idx):

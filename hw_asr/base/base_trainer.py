@@ -12,14 +12,13 @@ class BaseTrainer:
     Base class for all trainers
     """
 
-    def __init__(self, model: BaseModel, criterion, metrics, optimizer, config, device):
+    def __init__(self, model: BaseModel, criterion, optimizer, config, device):
         self.device = device
         self.config = config
         self.logger = config.get_logger("trainer", config["trainer"]["verbosity"])
 
         self.model = model
         self.criterion = criterion
-        self.metrics = metrics
         self.optimizer = optimizer
 
         # for interrupt saving
@@ -76,7 +75,6 @@ class BaseTrainer:
         """
         Full training logic
         """
-        not_improved_count = 0
         for epoch in range(self.start_epoch, self.epochs + 1):
             self._last_epoch = epoch
             result = self._train_epoch(epoch)
@@ -89,45 +87,8 @@ class BaseTrainer:
             for key, value in log.items():
                 self.logger.info("    {:15s}: {}".format(str(key), value))
 
-            # evaluate model performance according to configured metric,
-            # save best checkpoint as model_best
-            best = False
-            if self.mnt_mode != "off":
-                try:
-                    # check whether model performance improved or not,
-                    # according to specified metric(mnt_metric)
-                    if self.mnt_mode == "min":
-                        improved = log[self.mnt_metric] <= self.mnt_best
-                    elif self.mnt_mode == "max":
-                        improved = log[self.mnt_metric] >= self.mnt_best
-                    else:
-                        improved = False
-                except KeyError:
-                    self.logger.warning(
-                        "Warning: Metric '{}' is not found. "
-                        "Model performance monitoring is disabled.".format(
-                            self.mnt_metric
-                        )
-                    )
-                    self.mnt_mode = "off"
-                    improved = False
-
-                if improved:
-                    self.mnt_best = log[self.mnt_metric]
-                    not_improved_count = 0
-                    best = True
-                else:
-                    not_improved_count += 1
-
-                if not_improved_count > self.early_stop:
-                    self.logger.info(
-                        "Validation performance didn't improve for {} epochs. "
-                        "Training stops.".format(self.early_stop)
-                    )
-                    break
-
-            if epoch % self.save_period == 0 or best:
-                self._save_checkpoint(epoch, save_best=best, only_best=True)
+            if epoch % self.save_period == 0:
+                self._save_checkpoint(epoch, save_best=False, only_best=True)
 
     def _save_checkpoint(self, epoch, save_best=False, only_best=False):
         """

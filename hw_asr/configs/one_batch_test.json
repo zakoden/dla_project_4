@@ -31,7 +31,7 @@
             "part": "train",
             "max_audio_length": 20.0,
             "max_text_length": 200,
-            "limit": 10
+            "limit": 20
           }
         }
       ]
@@ -46,7 +46,7 @@
             "part": "train",
             "max_audio_length": 20.0,
             "max_text_length": 200,
-            "limit": 10
+            "limit": 20
           }
         }
       ]
@@ -77,8 +77,6 @@
     "save_dir": "saved/",
     "save_period": 5,
     "verbosity": 2,
-    "monitor": "min val_loss",
-    "early_stop": 100,
     "visualize": "wandb",
     "wandb_project": "dla4_project",
     "len_epoch": 100,

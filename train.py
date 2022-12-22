@@ -50,8 +50,6 @@ def main(config):
 
     # get function handles of loss and metrics
     loss_module = config.init_obj(config["loss"], module_loss).to(device)
-    metrics = [
-    ]
 
     # build optimizer, learning rate scheduler. delete every line containing lr_scheduler for
     # disabling scheduler
@@ -72,7 +70,6 @@ def main(config):
         lr_scheduler_lst[1:],
         model_lst[0],
         loss_module,
-        metrics,
         optimizer_lst[0],
         config=config,
         device=device,

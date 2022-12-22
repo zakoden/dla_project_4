@@ -5,6 +5,7 @@ from typing import List
 import numpy as np
 import torchaudio
 from torch.utils.data import Dataset
+import torch
 
 from hw_asr.utils.parse_config import ConfigParser
 
@@ -33,9 +34,17 @@ class BaseDataset(Dataset):
         data_dict = self._index[ind]
         audio_path = data_dict["path"]
         audio_wave = self.load_audio(audio_path)
+        if audio_wave.shape[1] > 8192:
+            right_start_pos = audio_wave.shape[1] - 8192
+            start_pos = random.randint(0, right_start_pos)
+            audio = audio_wave[:, start_pos:start_pos + 8192]
+        else:
+            audio = torch.zeros(audio_wave.shape[0], 8192)
+            audio[:, :audio_wave.shape[1]] = audio_wave
+
         return {
-            "audio": audio_wave,
-            "duration": audio_wave.size(1) / self.config_parser["preprocessing"]["sr"],
+            "audio": audio,
+            "duration": audio.size(1) / self.config_parser["preprocessing"]["sr"],
             "text": data_dict["text"],
             "audio_path": audio_path,
         }
