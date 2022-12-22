@@ -47,7 +47,7 @@ class sub_MPD(nn.Module):
         pad_add = time_dim % self.period
         if pad_add > 0:
             pad_add = self.period - pad_add
-        x_padded = torch.zeros(batch_size, n_channels, time_dim + pad_add)
+        x_padded = torch.zeros(batch_size, n_channels, time_dim + pad_add, device=x.device)
         x_padded[:, :, :time_dim] = x
         time_dim += pad_add
         x = x_padded.view(batch_size, n_channels, time_dim // self.period, self.period)

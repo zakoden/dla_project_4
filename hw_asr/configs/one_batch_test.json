@@ -37,16 +37,16 @@
       ]
     },
     "val": {
-      "batch_size": 16,
+      "batch_size": 1,
       "num_workers": 0,
       "datasets": [
         {
-          "type": "LJspeechDataset",
+          "type": "TestAudioDataset",
           "args": {
-            "part": "train",
             "max_audio_length": 20.0,
             "max_text_length": 200,
-            "limit": 20
+            "limit": 20,
+            "data_path_lst": ["1path", "2path"]
           }
         }
       ]

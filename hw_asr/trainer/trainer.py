@@ -13,7 +13,7 @@ from tqdm import tqdm
 from hw_asr.base import BaseTrainer
 from hw_asr.logger.utils import plot_spectrogram_to_buf
 from hw_asr.utils import inf_loop, MetricTracker
-from hw_asr.mel_spectrogram import melspec_config, melspec_func
+from hw_asr.mel_spectrogram import melspec_func_deviced
 
 
 class Trainer(BaseTrainer):
@@ -53,7 +53,9 @@ class Trainer(BaseTrainer):
             self.len_epoch = len_epoch
         self.evaluation_dataloaders = {k: v for k, v in dataloaders.items() if k != "train"}
         self.lr_scheduler = lr_scheduler
-        self.log_step = 50
+        self.log_step = 5
+
+        self.melspec_func_deviced = melspec_func_deviced.to(device)
 
     @staticmethod
     def move_batch_to_device(batch, device: torch.device):
@@ -113,6 +115,7 @@ class Trainer(BaseTrainer):
                 self.writer.add_scalar("discriminator loss", batch["discriminator_loss"].item())
                 self.writer.add_scalar("features loss", batch["features_loss"].item())
                 self.writer.add_scalar("mel loss", batch["mel_loss"].item())
+                self._log_test_audio()
 
                 #self._log_spectrogram(batch["spectrogram"])
                 # we don't want to reset train metrics at the start of every epoch
@@ -124,11 +127,11 @@ class Trainer(BaseTrainer):
         return {}
 
     def process_batch(self, batch, is_train: bool):
+        batch["audio"] = batch["audio"][:, None, :]
         batch = self.move_batch_to_device(batch, self.device)
 
-        batch["audio"] = batch["audio"][:, None, :]
         batch["wave_pred"] = self.model(batch["spectrogram"])["wave_pred"]
-        batch["spectrogram_pred"] = melspec_func(batch["wave_pred"][:, 0, :])
+        batch["spectrogram_pred"] = self.melspec_func_deviced(batch["wave_pred"][:, 0, :])
 
         for disc_opt in self.disc_optimizer_lst:
             disc_opt.zero_grad()
@@ -194,6 +197,25 @@ class Trainer(BaseTrainer):
             current = batch_idx
             total = self.len_epoch
         return base.format(current, total, 100.0 * current / total)
+
+    def _log_test_audio(self):
+        log_data = []
+        column_names = ["original_audio", "generated_audio"]
+
+        for batch_idx, batch in enumerate(self.evaluation_dataloaders["val"]):
+            batch["audio"] = batch["audio"][:, None, :]
+            batch = self.move_batch_to_device(batch, self.device)
+
+            batch["wave_pred"] = self.model(batch["spectrogram"])["wave_pred"]
+            #batch["spectrogram_pred"] = self.melspec_func_deviced(batch["wave_pred"][:, 0, :])
+
+            log_data.append([
+                self.writer.wandb.Audio(batch["audio"]),
+                self.writer.wandb.Audio(batch["wave_pred"][:, 0, :]),
+            ])
+
+        table = self.writer.wandb.Table(data=log_data, columns=column_names)
+        self.writer.wandb.log({"test_set": table}, step=self.writer.step)
 
     def _log_spectrogram(self, spectrogram_batch):
         spectrogram = random.choice(spectrogram_batch.cpu())
